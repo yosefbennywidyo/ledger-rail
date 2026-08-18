@@ -1,15 +1,15 @@
 [submodule "ledger-service"]
 	path = ledger-service
-	url = /Users/crowdotech/apps/me/explore/services/ledger-service
+	url = /Users/crowdotech/apps/me/explore/ledger-rail/services/ledger-service
 [submodule "payment-gateway"]
 	path = payment-gateway
-	url = /Users/crowdotech/apps/me/explore/services/payment-gateway
+	url = /Users/crowdotech/apps/me/explore/ledger-rail/services/payment-gateway
 [submodule "bff"]
 	path = bff
-	url = /Users/crowdotech/apps/me/explore/services/bff
+	url = /Users/crowdotech/apps/me/explore/ledger-rail/services/bff
 [submodule "fraud-check"]
 	path = fraud-check
-	url = /Users/crowdotech/apps/me/explore/services/fraud-check
+	url = /Users/crowdotech/apps/me/explore/ledger-rail/services/fraud-check
 [submodule "legacy-core"]
 	path = legacy-core
-	url = /Users/crowdotech/apps/me/explore/services/legacy-core
+	url = /Users/crowdotech/apps/me/explore/ledger-rail/services/legacy-core

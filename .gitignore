@@ -23,6 +23,10 @@ legacy-core/*.o
 legacy-core/data/balances.dat
 legacy-core/data/errors.log
 
+# Local source repos that the submodules in .gitmodules point to —
+# not tracked content of this repo, just where they happen to live on disk.
+/services/
+
 # Docker / local state
 pgdata/
 
