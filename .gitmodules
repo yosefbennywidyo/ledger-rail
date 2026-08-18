@@ -1,15 +1,15 @@
 [submodule "ledger-service"]
 	path = ledger-service
-	url = /Users/crowdotech/apps/me/explore/ledger-rail/services/ledger-service
+	url = git@github.com:yosefbennywidyo/ledger-service.git
 [submodule "payment-gateway"]
 	path = payment-gateway
-	url = /Users/crowdotech/apps/me/explore/ledger-rail/services/payment-gateway
+	url = git@github.com:yosefbennywidyo/payment-gateway.git
 [submodule "bff"]
 	path = bff
-	url = /Users/crowdotech/apps/me/explore/ledger-rail/services/bff
+	url = git@github.com:yosefbennywidyo/bff.git
 [submodule "fraud-check"]
 	path = fraud-check
-	url = /Users/crowdotech/apps/me/explore/ledger-rail/services/fraud-check
+	url = git@github.com:yosefbennywidyo/fraud-check.git
 [submodule "legacy-core"]
 	path = legacy-core
-	url = /Users/crowdotech/apps/me/explore/ledger-rail/services/legacy-core
+	url = git@github.com:yosefbennywidyo/legacy-core.git
