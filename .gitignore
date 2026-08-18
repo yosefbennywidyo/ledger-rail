@@ -1,0 +1,31 @@
+# Go (ledger-service)
+/ledger-service/ledger-service
+*.exe
+*.test
+
+# Java (payment-gateway)
+payment-gateway/target/
+
+# Node.js / TypeScript (bff)
+bff/node_modules/
+bff/dist/
+
+# Python (fraud-check)
+fraud-check/.venv/
+fraud-check/__pycache__/
+fraud-check/**/__pycache__/
+fraud-check/.pytest_cache/
+*.pyc
+
+# COBOL (legacy-core)
+legacy-core/eod-settlement
+legacy-core/*.o
+legacy-core/data/balances.dat
+legacy-core/data/errors.log
+
+# Docker / local state
+pgdata/
+
+# OS / editor
+.DS_Store
+*.swp

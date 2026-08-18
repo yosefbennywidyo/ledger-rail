@@ -1,0 +1,25 @@
+[project]
+name = "fraud-check"
+version = "0.1.0"
+description = "Async Kafka consumer that scores transaction events for anomalies (portfolio skeleton, not a real fraud model)."
+authors = [
+    { name = "Yosef Benny Widyokarsono", email = "yosefbennywidyo@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aiokafka>=0.12.0",
+    "scikit-learn>=1.5.0",
+    "numpy>=1.26.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+fraud-check = "fraud_check.main:run"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"

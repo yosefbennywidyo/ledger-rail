@@ -1,0 +1,8 @@
+[tools]
+go = "latest"
+java = "latest"
+maven = "latest"
+node = "lts"
+python = "latest"
+rpk = "latest"
+uv = "latest"
