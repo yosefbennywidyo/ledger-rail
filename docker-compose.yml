@@ -9,11 +9,22 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./ledger-service/internal/postgres/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledger"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   redis:
     image: redis:7
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:latest
@@ -22,10 +33,15 @@ services:
       - --smp 1
       - --overprovisioned
       - --node-id 0
-      - --kafka-addr PLAINTEXT://0.0.0.0:9092
-      - --advertise-kafka-addr PLAINTEXT://localhost:9092
+      - --kafka-addr internal://0.0.0.0:29092,external://0.0.0.0:9092
+      - --advertise-kafka-addr internal://redpanda:29092,external://localhost:9092
     ports:
       - "9092:9092"
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info", "--brokers", "localhost:9092"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   vault:
     image: hashicorp/vault:latest
@@ -35,6 +51,58 @@ services:
       VAULT_DEV_ROOT_TOKEN_ID: dev-root-token
     ports:
       - "8200:8200"
+
+  ledger-service:
+    build: ./ledger-service
+    environment:
+      DATABASE_URL: postgres://ledger:ledger@postgres:5432/ledger?sslmode=disable
+      PORT: "8080"
+      KAFKA_BROKERS: redpanda:29092
+      KAFKA_TOPIC: transactions
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+
+  payment-gateway:
+    build: ./payment-gateway
+    environment:
+      LEDGER_SERVICE_BASE_URL: http://ledger-service:8080
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    ports:
+      - "8081:8081"
+    depends_on:
+      redis:
+        condition: service_healthy
+      ledger-service:
+        condition: service_healthy
+
+  bff:
+    build: ./bff
+    environment:
+      PORT: "8082"
+      PAYMENT_GATEWAY_URL: http://payment-gateway:8081
+    ports:
+      - "8082:8082"
+    depends_on:
+      payment-gateway:
+        condition: service_healthy
+
+  fraud-check:
+    build: ./fraud-check
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      KAFKA_TOPIC: transactions
+      HEALTH_PORT: "8090"
+    ports:
+      - "8090:8090"
+    depends_on:
+      redpanda:
+        condition: service_healthy
 
 volumes:
   pgdata:
