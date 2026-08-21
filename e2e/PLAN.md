@@ -1,6 +1,6 @@
 # Rencana End-to-End Test — Ledger & Rail
 
-> Status saat ini (update 2026-08-21): **Tahap 0, 1, dan 2 selesai** — jalur A–F (sinkron, idempotency Redis, dan async Kafka → Fraud Check) semua punya e2e test otomatis (`e2e/tests/sync-path.test.ts` + `async-path.test.ts`, Vitest) yang dijalankan lewat `start-all.sh`/`stop-all.sh`. Hanya jalur G (rekonsiliasi Legacy Core) yang masih gap — lihat §1 dan Tahap 3 di bawah. Dokumen ini mencakup semua jalur komunikasi yang sudah didesain di `bahasa-teknologi-perbankan.md` bagian 7.
+> Status saat ini (update 2026-08-21): **Tahap 0-3 selesai** — semua 7 jalur (A-G) punya e2e test otomatis (`e2e/tests/sync-path.test.ts`, `async-path.test.ts`, `reconciliation.test.ts`, Vitest) yang dijalankan lewat `start-all.sh`/`stop-all.sh`. Sisa: Tahap 4 (CI), opsional. Dokumen ini mencakup semua jalur komunikasi yang sudah didesain di `bahasa-teknologi-perbankan.md` bagian 7.
 
 Ditulis: 2026-08-18. Lokasi: `ledger-rail/e2e/` — repo induk, bukan salah satu submodule, karena e2e test secara definisi menyentuh lebih dari satu komponen sekaligus.
 
@@ -34,7 +34,7 @@ Legacy Core (COBOL) ──► batch offline, tidak nyambung live ke jalur di ata
 | D | Ledger Service → PostgreSQL | sinkron | ✅ ada | ✅ verifikasi langsung ke Postgres (`ledger_entries`) |
 | E | Ledger Service → Kafka (publish event) | asinkron | ✅ `internal/kafka.Producer` | ✅ `e2e/tests/async-path.test.ts` verifikasi lewat consumer kafkajs |
 | F | Kafka → Fraud Check (consume event) | asinkron | ✅ ada | ✅ sama, plus verifikasi log fraud-check benar memproses |
-| G | Legacy Core rekonsiliasi vs Ledger Service | offline/batch | ✅ Legacy Core jalan sendiri | ❌ tidak ada perbandingan otomatis dengan saldo Ledger Service |
+| G | Legacy Core rekonsiliasi vs Ledger Service | offline/batch | ✅ Legacy Core jalan sendiri | ✅ `e2e/tests/reconciliation.test.ts` — saldo penutupan identik |
 
 ---
 
@@ -66,9 +66,10 @@ Legacy Core (COBOL) ──► batch offline, tidak nyambung live ke jalur di ata
 - **Bug ditemukan & diperbaiki saat verifikasi nyata:** memanggil `consumer.disconnect()` dari dalam callback `eachMessage` kafkajs menyebabkan deadlock (run loop internal kafkajs menunggu callback, callback menunggu disconnect). Perbaikan: disconnect di blok `finally` di luar stack callback.
 - Diverifikasi end-to-end nyata: post transaksi ke `ledger-service` langsung, konfirmasi event ada di topic via `rpk topic consume`, jalankan `fraud-check` sungguhan dan lihat log `processed transaction ... flagged=False`. Lalu suite penuh: `start-all.sh` → `npm test` (8/8 pass) → `stop-all.sh`.
 
-### Tahap 3 — Rekonsiliasi Legacy Core (jalur G)
-- Skrip yang: (1) menjalankan beberapa transaksi lewat jalur A–D, (2) mengekspor saldo akhir dari Postgres, (3) menyusun `data/transactions.dat` untuk Legacy Core dari transaksi yang sama, (4) menjalankan `eod-settlement`, (5) membandingkan `data/balances.dat` COBOL vs saldo Postgres — harus identik. Ini menguji konsep "strangler pattern / rekonsiliasi batch vs real-time" yang jadi tema utama komponen Legacy Core, bukan sekadar smoke test.
-- Paling kompleks di antara semua tahap karena melibatkan translasi format (JSON ↔ fixed-width) — dikerjakan terakhir.
+### Tahap 3 — Rekonsiliasi Legacy Core (jalur G) — ✅ selesai
+- **Prasyarat yang muncul saat implementasi:** `eod-settlement.cbl` men-hardcode path `data/transactions.dat` dkk., yang berisi sample data ter-commit (dipakai README untuk verifikasi manual) — menimpanya langsung akan merusak fixture itu. Diperbaiki di `legacy-core`: path file sekarang dibaca dari environment variable (`EOD_OPENING_BALANCES_FILE`, `EOD_TRANSACTIONS_FILE`, `EOD_BALANCES_FILE`, `EOD_ERRORS_FILE`) lewat paragraf baru `READ-FILE-PATHS-FROM-ENV`, dengan default identik ke path lama kalau env var tidak diset (diverifikasi: output tidak berubah tanpa env var).
+- `e2e/tests/reconciliation.test.ts`: (1) seed saldo awal 2 dari 3 akun langsung di Postgres (akun ketiga sengaja tanpa saldo awal untuk menguji aturan "default nol"), (2) jalankan 3 transaksi berurutan lewat BFF yang saling bergantung saldo (akun C baru punya saldo untuk didebit setelah dikredit transaksi sebelumnya), (3) bangun `transactions.dat`/`opening-balances.dat` sintetis di direktori temp langsung dari baris `ledger_entries` Postgres milik transaksi tersebut (bukan dihitung ulang manual — jadi benar-benar menguji jalur data asli), (4) compile + jalankan `eod-settlement` terhadap direktori temp itu via env var, (5) parse `balances.dat` (format `-ZZZ,ZZZ,ZZ9.99`) dan bandingkan tiap akun terhadap `SUM(amount_cents)` dari Postgres — harus identik persis.
+- Diverifikasi nyata: build `cobc` sukses, saldo akhir 3 akun (termasuk kasus tanpa saldo awal & akun yang di-debit dari saldo hasil kredit transaksi lain) cocok 100% antara COBOL dan Postgres. Sample data `legacy-core/data/*.dat` dikonfirmasi tidak berubah (`git status` bersih) setelah test jalan.
 
 ### Tahap 4 — CI (opsional, terpisah per repo + satu workflow gabungan)
 - Tiap 5 repo submodule: CI ringan untuk unit test masing-masing (`go test`, `mvn test`, `npm test`, `pytest`, `cobc` compile check) — independen, tidak butuh docker-compose.
@@ -86,16 +87,15 @@ ledger-rail/
     scripts/
       start-all.sh             ← tahap 1-2, selesai (infra + 4 komponen aplikasi)
       stop-all.sh               ← pasangan start-all.sh
-      reconcile-legacy.sh        ← tahap 3, belum dibuat
     tests/
-      support/env.ts             ← URL/DSN/broker komponen, dari env var
-      support/ledger-client.ts   ← seed saldo + submit payment, dipakai sync & async test
+      support/env.ts             ← URL/DSN/broker/path komponen, dari env var
+      support/ledger-client.ts   ← seed saldo + submit payment, dipakai sync/async/reconciliation
       sync-path.test.ts          ← jalur A-D + C, selesai
       async-path.test.ts         ← jalur E-F, selesai
-      reconciliation.test.ts     ← jalur G, belum dibuat (tahap 3)
+      reconciliation.test.ts     ← jalur G, selesai
 ```
 
-`scripts/smoke.sh` (tahap 0) sudah dihapus — digantikan penuh oleh `tests/sync-path.test.ts`.
+`scripts/smoke.sh` (tahap 0) sudah dihapus — digantikan penuh oleh `tests/sync-path.test.ts`. Rencana awal punya `scripts/reconcile-legacy.sh` terpisah di tahap 3, tapi tidak dibuat — mengikuti keputusan yang sama dengan smoke.sh: logic rekonsiliasi hidup penuh di `tests/reconciliation.test.ts` (assert otomatis + exit code yang benar), bukan skrip shell yang perlu dibaca manual.
 
 ---
 

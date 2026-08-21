@@ -16,3 +16,6 @@ export const KAFKA_TOPIC = process.env["KAFKA_TOPIC"] ?? "transactions";
 export const FRAUD_CHECK_URL = process.env["FRAUD_CHECK_URL"] ?? "http://localhost:8090";
 export const FRAUD_CHECK_LOG =
   process.env["FRAUD_CHECK_LOG"] ?? new URL("../../.run/fraud-check.log", import.meta.url).pathname;
+
+export const LEGACY_CORE_DIR =
+  process.env["LEGACY_CORE_DIR"] ?? new URL("../../../legacy-core", import.meta.url).pathname;
