@@ -1,15 +1,15 @@
 [submodule "ledger-service"]
 	path = ledger-service
-	url = git@github.com:yosefbennywidyo/ledger-service.git
+	url = https://github.com/yosefbennywidyo/ledger-service.git
 [submodule "payment-gateway"]
 	path = payment-gateway
-	url = git@github.com:yosefbennywidyo/payment-gateway.git
+	url = https://github.com/yosefbennywidyo/payment-gateway.git
 [submodule "bff"]
 	path = bff
-	url = git@github.com:yosefbennywidyo/bff.git
+	url = https://github.com/yosefbennywidyo/bff.git
 [submodule "fraud-check"]
 	path = fraud-check
-	url = git@github.com:yosefbennywidyo/fraud-check.git
+	url = https://github.com/yosefbennywidyo/fraud-check.git
 [submodule "legacy-core"]
 	path = legacy-core
-	url = git@github.com:yosefbennywidyo/legacy-core.git
+	url = https://github.com/yosefbennywidyo/legacy-core.git

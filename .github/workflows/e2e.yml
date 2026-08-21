@@ -1,0 +1,78 @@
+name: e2e
+
+# Combined e2e workflow (Stage 4 in e2e/PLAN.md): brings up every component
+# for real (no mocks, matching PLAN.md's principle #1) and runs the full
+# Vitest suite in e2e/ — sync path, async path, and Legacy Core
+# reconciliation. Per-repo unit-test CI for each submodule is separate and
+# lives in each component's own repo.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Installs Go, Java, Maven, Node, Python, uv, and rpk per .mise.toml —
+      # the same toolchain e2e/scripts/start-all.sh assumes locally.
+      - name: Install mise-managed toolchains
+        uses: jdx/mise-action@v2
+
+      # Not mise-managed (no official plugin) — see legacy-core/README.md.
+      - name: Install GnuCOBOL
+        run: sudo apt-get update && sudo apt-get install -y gnucobol3
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ hashFiles('payment-gateway/pom.xml') }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('ledger-service/go.sum') }}
+
+      # Pre-fetch every component's dependencies up front, so start-all.sh's
+      # health-check polling window isn't spent waiting on first-run
+      # downloads (Maven Central, PyPI, npm registry) instead of the process
+      # actually starting.
+      - name: Pre-fetch dependencies
+        run: |
+          (cd ledger-service && mise exec go -- go mod download)
+          (cd payment-gateway && mise exec java maven -- mvn -q -B dependency:resolve)
+          (cd bff && mise exec node -- npm install)
+          (cd fraud-check && mise exec uv -- uv sync)
+          (cd e2e && mise exec node -- npm install)
+
+      - name: Start all components
+        run: ./e2e/scripts/start-all.sh
+
+      - name: Run e2e suite
+        working-directory: e2e
+        run: mise exec node -- npm test
+
+      - name: Dump component logs
+        if: failure()
+        run: |
+          for f in e2e/.run/*.log; do
+            echo "==== $f ===="
+            cat "$f" || true
+          done
+
+      - name: Stop all components
+        if: always()
+        run: ./e2e/scripts/stop-all.sh
