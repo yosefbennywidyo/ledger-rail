@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Starts infra (Postgres, Redis) via docker compose and the three synchronous-path
-# components (ledger-service, payment-gateway, bff) as local background processes,
-# polling each /healthz before returning. Companion to stop-all.sh.
+# Starts infra (Postgres, Redis, Redpanda) via docker compose and the four
+# components on the sync + async paths (ledger-service, payment-gateway, bff,
+# fraud-check) as local background processes, polling each /healthz before
+# returning. Companion to stop-all.sh. Legacy Core (offline/batch) is not
+# started here — see e2e/PLAN.md stage 3.
 #
 # Run from the ledger-rail repo root: ./e2e/scripts/start-all.sh
 set -euo pipefail
@@ -10,8 +12,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_DIR="$ROOT/e2e/.run"
 mkdir -p "$RUN_DIR"
 
-echo "== infra: postgres, redis =="
-(cd "$ROOT" && docker compose up -d postgres redis)
+echo "== infra: postgres, redis, redpanda =="
+(cd "$ROOT" && docker compose up -d postgres redis redpanda)
 
 echo "== waiting for postgres =="
 for i in $(seq 1 30); do
@@ -26,6 +28,15 @@ echo "== applying schema =="
 docker exec -i ledger-rail-postgres-1 psql -U ledger -d ledger -v ON_ERROR_STOP=1 \
   < "$ROOT/ledger-service/internal/postgres/schema.sql"
 
+echo "== waiting for redpanda =="
+for i in $(seq 1 30); do
+  if mise exec rpk -- rpk cluster info --brokers localhost:9092 >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+mise exec rpk -- rpk topic create transactions --brokers localhost:9092 2>/dev/null || true
+
 start_component() {
   local name="$1"
   shift
@@ -36,6 +47,7 @@ start_component() {
 start_component ledger-service bash -c "cd '$ROOT/ledger-service' && mise exec go -- go run ./cmd/ledger-service"
 start_component payment-gateway bash -c "cd '$ROOT/payment-gateway' && mise exec java maven -- mvn -q spring-boot:run"
 start_component bff bash -c "cd '$ROOT/bff' && mise exec node -- npm run dev"
+start_component fraud-check bash -c "cd '$ROOT/fraud-check' && mise exec uv -- uv run fraud-check"
 
 wait_healthy() {
   local name="$1"
@@ -54,5 +66,6 @@ wait_healthy() {
 wait_healthy ledger-service http://localhost:8080/healthz
 wait_healthy payment-gateway http://localhost:8081/healthz
 wait_healthy bff http://localhost:8082/healthz
+wait_healthy fraud-check http://localhost:8090/healthz
 
 echo "== all components up =="

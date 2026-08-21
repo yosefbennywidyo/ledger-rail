@@ -1,5 +1,5 @@
-// Jalur A-D: BFF -> Payment Gateway -> Ledger Service -> Postgres, plus the
-// Payment Gateway -> Redis idempotency cache (jalur C). Requires the real
+// Synchronous path: BFF -> Payment Gateway -> Ledger Service -> Postgres,
+// plus the Payment Gateway -> Redis idempotency cache. Requires the real
 // components running (./e2e/scripts/start-all.sh) — nothing here is mocked,
 // per e2e/PLAN.md principle #1: the point is to catch bugs (e.g. JSON field
 // casing mismatches) that mocks would hide.
@@ -8,13 +8,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client as PgClient } from "pg";
 import { createClient as createRedisClient } from "redis";
 
-import {
-  BFF_URL,
-  LEDGER_SERVICE_URL,
-  PAYMENT_GATEWAY_URL,
-  POSTGRES_URL,
-  REDIS_URL,
-} from "./support/env.js";
+import { BFF_URL, LEDGER_SERVICE_URL, PAYMENT_GATEWAY_URL, POSTGRES_URL, REDIS_URL } from "./support/env.js";
+import { entriesFor, seedPayerBalance, submitPayment } from "./support/ledger-client.js";
 
 const pg = new PgClient({ connectionString: POSTGRES_URL });
 const redis = createRedisClient({ url: REDIS_URL });
@@ -29,51 +24,6 @@ afterAll(async () => {
   await redis.quit();
 });
 
-interface LedgerEntryRow {
-  account_id: string;
-  amount_cents: string; // bigint comes back as string from node-postgres
-}
-
-/**
- * Seeds a payer balance directly in Postgres. ledger-service enforces
- * balanced (sum-to-zero) double-entry and rejects any debit that would take
- * an account negative — there is no genesis/top-up account yet (open
- * question in PLAN.md §5), so a fresh payer always starts at 0 and this is
- * the only way to fund one for a test.
- */
-async function seedPayerBalance(accountId: string, amountCents: number): Promise<void> {
-  const seedKey = `seed-${accountId}`;
-  await pg.query("BEGIN");
-  await pg.query("INSERT INTO ledger_transactions (idempotency_key) VALUES ($1)", [seedKey]);
-  await pg.query(
-    "INSERT INTO ledger_entries (idempotency_key, account_id, amount_cents) VALUES ($1, $2, $3)",
-    [seedKey, accountId, amountCents],
-  );
-  await pg.query("COMMIT");
-}
-
-async function entriesFor(idempotencyKey: string): Promise<LedgerEntryRow[]> {
-  const result = await pg.query<LedgerEntryRow>(
-    "SELECT account_id, amount_cents FROM ledger_entries WHERE idempotency_key = $1 ORDER BY account_id",
-    [idempotencyKey],
-  );
-  return result.rows;
-}
-
-async function submitPayment(body: {
-  payer_account: string;
-  payee_account: string;
-  amount_cents: number;
-  idempotency_key: string;
-}): Promise<{ status: number; body: unknown }> {
-  const response = await fetch(`${BFF_URL}/api/payments`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
 describe("health checks", () => {
   it.each([
     ["ledger-service", `${LEDGER_SERVICE_URL}/healthz`],
@@ -85,12 +35,12 @@ describe("health checks", () => {
   });
 });
 
-describe("jalur A-D: submit payment through BFF", () => {
+describe("submit payment through BFF", () => {
   it("applies a balanced double-entry transaction in Postgres", async () => {
     const runId = randomUUID();
     const payerAccount = `acct-payer-${runId}`;
     const payeeAccount = `acct-payee-${runId}`;
-    await seedPayerBalance(payerAccount, 100_000);
+    await seedPayerBalance(pg, payerAccount, 100_000);
 
     const result = await submitPayment({
       payer_account: payerAccount,
@@ -101,7 +51,7 @@ describe("jalur A-D: submit payment through BFF", () => {
 
     expect(result.status).toBe(201);
 
-    const entries = await entriesFor(runId);
+    const entries = await entriesFor(pg, runId);
     expect(entries).toEqual([
       { account_id: payeeAccount, amount_cents: "1500" },
       { account_id: payerAccount, amount_cents: "-1500" },
@@ -121,16 +71,16 @@ describe("jalur A-D: submit payment through BFF", () => {
     });
 
     expect(result.status).toBe(422);
-    expect(await entriesFor(runId)).toEqual([]);
+    expect(await entriesFor(pg, runId)).toEqual([]);
   });
 });
 
-describe("jalur C: idempotency via Redis", () => {
+describe("idempotency via Redis", () => {
   it("caches the outcome and does not double-apply the transaction on retry", async () => {
     const runId = randomUUID();
     const payerAccount = `acct-payer-${runId}`;
     const payeeAccount = `acct-payee-${runId}`;
-    await seedPayerBalance(payerAccount, 100_000);
+    await seedPayerBalance(pg, payerAccount, 100_000);
 
     const request = {
       payer_account: payerAccount,
@@ -152,7 +102,7 @@ describe("jalur C: idempotency via Redis", () => {
 
     // The retry must have been served entirely from the Redis cache — Postgres
     // shows exactly one debit/credit pair, not two.
-    expect(await entriesFor(runId)).toEqual([
+    expect(await entriesFor(pg, runId)).toEqual([
       { account_id: payeeAccount, amount_cents: "2500" },
       { account_id: payerAccount, amount_cents: "-2500" },
     ]);

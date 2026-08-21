@@ -1,6 +1,6 @@
 # Rencana End-to-End Test — Ledger & Rail
 
-> Status saat ini (update 2026-08-21): **Tahap 0 dan Tahap 1 selesai** — jalur A–D dan C (sinkron + idempotency Redis) punya e2e test otomatis (`e2e/tests/sync-path.test.ts`, Vitest) yang dijalankan lewat `start-all.sh`/`stop-all.sh`. Jalur E–G (Kafka, Fraud Check, rekonsiliasi Legacy Core) masih tertutup gap — lihat §1 dan Tahap 2–3 di bawah. Dokumen ini mencakup semua jalur komunikasi yang sudah didesain di `bahasa-teknologi-perbankan.md` bagian 7.
+> Status saat ini (update 2026-08-21): **Tahap 0, 1, dan 2 selesai** — jalur A–F (sinkron, idempotency Redis, dan async Kafka → Fraud Check) semua punya e2e test otomatis (`e2e/tests/sync-path.test.ts` + `async-path.test.ts`, Vitest) yang dijalankan lewat `start-all.sh`/`stop-all.sh`. Hanya jalur G (rekonsiliasi Legacy Core) yang masih gap — lihat §1 dan Tahap 3 di bawah. Dokumen ini mencakup semua jalur komunikasi yang sudah didesain di `bahasa-teknologi-perbankan.md` bagian 7.
 
 Ditulis: 2026-08-18. Lokasi: `ledger-rail/e2e/` — repo induk, bukan salah satu submodule, karena e2e test secara definisi menyentuh lebih dari satu komponen sekaligus.
 
@@ -17,11 +17,11 @@ BFF (8082) ──────────────► Payment Gateway (8081) 
                                     ▼
                           Ledger Service (8080) ──► PostgreSQL
                                     │
-                                    ▼ (belum diimplementasi — lihat §3.3)
+                                    ▼
                               Kafka / Redpanda (9092)
                                     │
                                     ▼
-                              Fraud Check (consumer)
+                              Fraud Check (8090, consumer)
 
 Legacy Core (COBOL) ──► batch offline, tidak nyambung live ke jalur di atas
 ```
@@ -32,8 +32,8 @@ Legacy Core (COBOL) ──► batch offline, tidak nyambung live ke jalur di ata
 | B | Payment Gateway → Ledger Service | sinkron (REST) | ✅ ada | ✅ termasuk kasus insufficient-balance (422) |
 | C | Payment Gateway → Redis (idempotency) | sinkron | ✅ ada | ✅ verifikasi langsung ke Redis (TTL + no double-apply) |
 | D | Ledger Service → PostgreSQL | sinkron | ✅ ada | ✅ verifikasi langsung ke Postgres (`ledger_entries`) |
-| E | Ledger Service → Kafka (publish event) | asinkron | ❌ **belum diimplementasi** | ❌ tidak bisa diuji sebelum E dibangun |
-| F | Kafka → Fraud Check (consume event) | asinkron | ✅ ada (sisi consumer), diuji manual pakai `rpk produce` | ⚠️ manual, tidak otomatis, dan tidak tersambung ke producer sungguhan |
+| E | Ledger Service → Kafka (publish event) | asinkron | ✅ `internal/kafka.Producer` | ✅ `e2e/tests/async-path.test.ts` verifikasi lewat consumer kafkajs |
+| F | Kafka → Fraud Check (consume event) | asinkron | ✅ ada | ✅ sama, plus verifikasi log fraud-check benar memproses |
 | G | Legacy Core rekonsiliasi vs Ledger Service | offline/batch | ✅ Legacy Core jalan sendiri | ❌ tidak ada perbandingan otomatis dengan saldo Ledger Service |
 
 ---
@@ -59,9 +59,12 @@ Legacy Core (COBOL) ──► batch offline, tidak nyambung live ke jalur di ata
 - **Keputusan reset state (buka pertanyaan §5):** tidak reset schema antar-run — tiap test memakai `randomUUID()` untuk account id & idempotency key, sehingga aman dijalankan berulang dari state manapun tanpa bentrok data lama.
 - Diverifikasi end-to-end: `start-all.sh` → `npm test` (6/6 pass) → `stop-all.sh`, dijalankan nyata bukan cuma dibaca.
 
-### Tahap 2 — Menutup gap Kafka (jalur E), baru jalur F bisa diuji penuh
-- **Prasyarat wajib:** `ledger-service` perlu ditambah producer Kafka (publish event setelah `Apply` sukses) — ini pekerjaan kode di repo `ledger-service`, bukan bagian dari e2e test itu sendiri, tapi e2e test jalur F tidak bisa jujur tanpa ini (sekarang hanya menguji consumer dengan pesan yang diproduksi manual, bukan alur nyata).
-- Setelah producer ada: e2e test tahap 1 diperluas — setelah POST transaksi lewat jalur A–D, poll topic `transactions` (via `rpk` atau klien Kafka) untuk memastikan event benar-benar terbit dengan payload yang cocok, lalu cek log/health Fraud Check untuk konfirmasi ia memprosesnya.
+### Tahap 2 — Menutup gap Kafka (jalur E), baru jalur F bisa diuji penuh — ✅ selesai
+- `ledger-service` mendapat `internal/kafka.Producer` (paket baru, pakai `segmentio/kafka-go`) yang mengimplementasikan interface baru `ledger.EventPublisher`. `ledger.Service.Post` memanggil `Publish` setelah `Apply` sukses — gagal publish di-log tapi tidak menggagalkan request (Postgres tetap source of truth, Kafka cuma fan-out async). Unit test memverifikasi publish terjadi tepat sekali per transaksi (termasuk saat idempotent retry) dan gagal-publish tidak menggagalkan `Post`.
+- `start-all.sh`/`stop-all.sh` diperluas: nyalakan Redpanda + `fraud-check` (lewat `uv run fraud-check`), poll `/healthz` fraud-check juga.
+- `e2e/tests/async-path.test.ts` ditambahkan: submit pembayaran lewat BFF, konsumsi topic `transactions` pakai `kafkajs` untuk verifikasi event benar-benar terbit dengan payload yang cocok persis skema yang diharapkan `fraud-check`, lalu poll log `fraud-check` untuk konfirmasi ia benar-benar memproses (bukan cuma health check statis).
+- **Bug ditemukan & diperbaiki saat verifikasi nyata:** memanggil `consumer.disconnect()` dari dalam callback `eachMessage` kafkajs menyebabkan deadlock (run loop internal kafkajs menunggu callback, callback menunggu disconnect). Perbaikan: disconnect di blok `finally` di luar stack callback.
+- Diverifikasi end-to-end nyata: post transaksi ke `ledger-service` langsung, konfirmasi event ada di topic via `rpk topic consume`, jalankan `fraud-check` sungguhan dan lihat log `processed transaction ... flagged=False`. Lalu suite penuh: `start-all.sh` → `npm test` (8/8 pass) → `stop-all.sh`.
 
 ### Tahap 3 — Rekonsiliasi Legacy Core (jalur G)
 - Skrip yang: (1) menjalankan beberapa transaksi lewat jalur A–D, (2) mengekspor saldo akhir dari Postgres, (3) menyusun `data/transactions.dat` untuk Legacy Core dari transaksi yang sama, (4) menjalankan `eod-settlement`, (5) membandingkan `data/balances.dat` COBOL vs saldo Postgres — harus identik. Ini menguji konsep "strangler pattern / rekonsiliasi batch vs real-time" yang jadi tema utama komponen Legacy Core, bukan sekadar smoke test.
@@ -81,13 +84,14 @@ ledger-rail/
     PLAN.md                   ← dokumen ini
     package.json               ← Vitest sebagai runner (proyek Node/TS sendiri)
     scripts/
-      start-all.sh             ← tahap 1, selesai
+      start-all.sh             ← tahap 1-2, selesai (infra + 4 komponen aplikasi)
       stop-all.sh               ← pasangan start-all.sh
       reconcile-legacy.sh        ← tahap 3, belum dibuat
     tests/
-      support/env.ts             ← URL/DSN komponen, dari env var
+      support/env.ts             ← URL/DSN/broker komponen, dari env var
+      support/ledger-client.ts   ← seed saldo + submit payment, dipakai sync & async test
       sync-path.test.ts          ← jalur A-D + C, selesai
-      async-path.test.ts         ← jalur E-F, belum dibuat (setelah tahap 2)
+      async-path.test.ts         ← jalur E-F, selesai
       reconciliation.test.ts     ← jalur G, belum dibuat (tahap 3)
 ```
 
