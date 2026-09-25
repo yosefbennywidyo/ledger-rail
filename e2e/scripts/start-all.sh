@@ -16,13 +16,18 @@ echo "== infra: postgres, redis, redpanda =="
 (cd "$ROOT" && docker compose up -d postgres redis redpanda)
 
 echo "== waiting for postgres =="
+# pg_isready alone is not enough: on a fresh volume the image runs
+# docker-entrypoint-initdb.d against a temporary server that already accepts
+# connections (unix socket only) before POSTGRES_DB exists and before init
+# scripts finish. Query the ledger database over TCP, which only the final
+# server listens on.
 for i in $(seq 1 30); do
-  if docker exec ledger-rail-postgres-1 pg_isready -U ledger >/dev/null 2>&1; then
+  if docker exec ledger-rail-postgres-1 psql -h 127.0.0.1 -U ledger -d ledger -c 'select 1' >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
-docker exec ledger-rail-postgres-1 pg_isready -U ledger
+docker exec ledger-rail-postgres-1 psql -h 127.0.0.1 -U ledger -d ledger -c 'select 1' >/dev/null
 
 echo "== applying schema =="
 docker exec -i ledger-rail-postgres-1 psql -U ledger -d ledger -v ON_ERROR_STOP=1 \
