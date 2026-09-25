@@ -87,6 +87,7 @@ ledger-rail/
     scripts/
       start-all.sh             ← tahap 1-2, selesai (infra + 4 komponen aplikasi)
       stop-all.sh               ← pasangan start-all.sh
+      ci-local.sh               ← replika langkah .github/workflows/e2e.yml dari state bersih (down -v → prefetch → start → test → stop); tolak jalan kalau 5432/6379 dipegang service host
     tests/
       support/env.ts             ← URL/DSN/broker/path komponen, dari env var
       support/ledger-client.ts   ← seed saldo + submit payment, dipakai sync/async/reconciliation
