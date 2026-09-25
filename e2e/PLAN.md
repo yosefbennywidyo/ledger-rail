@@ -1,6 +1,6 @@
 # Rencana End-to-End Test — Ledger & Rail
 
-> Status saat ini (update 2026-08-21): **Tahap 0-3 selesai** — semua 7 jalur (A-G) punya e2e test otomatis (`e2e/tests/sync-path.test.ts`, `async-path.test.ts`, `reconciliation.test.ts`, Vitest) yang dijalankan lewat `start-all.sh`/`stop-all.sh`. Sisa: Tahap 4 (CI), opsional. Dokumen ini mencakup semua jalur komunikasi yang sudah didesain di `bahasa-teknologi-perbankan.md` bagian 7.
+> Status saat ini (update 2026-09-25 ~13:52 WIB): **Tahap 0-4 selesai** — semua 7 jalur (A-G) punya e2e test otomatis (`e2e/tests/sync-path.test.ts`, `async-path.test.ts`, `reconciliation.test.ts`, Vitest), dijalankan lewat `start-all.sh`/`stop-all.sh` (atau varian Docker / `ci-local.sh`) dan di CI GitHub Actions. Cara menjalankan: [`README.md`](README.md). Sisa di luar rencana ini: CI unit test per repo submodule. Dokumen ini mencakup semua jalur komunikasi yang sudah didesain di `bahasa-teknologi-perbankan.md` bagian 7.
 
 Ditulis: 2026-08-18. Lokasi: `ledger-rail/e2e/` — repo induk, bukan salah satu submodule, karena e2e test secara definisi menyentuh lebih dari satu komponen sekaligus.
 
@@ -71,9 +71,12 @@ Legacy Core (COBOL) ──► batch offline, tidak nyambung live ke jalur di ata
 - `e2e/tests/reconciliation.test.ts`: (1) seed saldo awal 2 dari 3 akun langsung di Postgres (akun ketiga sengaja tanpa saldo awal untuk menguji aturan "default nol"), (2) jalankan 3 transaksi berurutan lewat BFF yang saling bergantung saldo (akun C baru punya saldo untuk didebit setelah dikredit transaksi sebelumnya), (3) bangun `transactions.dat`/`opening-balances.dat` sintetis di direktori temp langsung dari baris `ledger_entries` Postgres milik transaksi tersebut (bukan dihitung ulang manual — jadi benar-benar menguji jalur data asli), (4) compile + jalankan `eod-settlement` terhadap direktori temp itu via env var, (5) parse `balances.dat` (format `-ZZZ,ZZZ,ZZ9.99`) dan bandingkan tiap akun terhadap `SUM(amount_cents)` dari Postgres — harus identik persis.
 - Diverifikasi nyata: build `cobc` sukses, saldo akhir 3 akun (termasuk kasus tanpa saldo awal & akun yang di-debit dari saldo hasil kredit transaksi lain) cocok 100% antara COBOL dan Postgres. Sample data `legacy-core/data/*.dat` dikonfirmasi tidak berubah (`git status` bersih) setelah test jalan.
 
-### Tahap 4 — CI (opsional, terpisah per repo + satu workflow gabungan)
+### Tahap 4 — CI (opsional, terpisah per repo + satu workflow gabungan) — ✅ workflow gabungan selesai; CI per repo belum
 - Tiap 5 repo submodule: CI ringan untuk unit test masing-masing (`go test`, `mvn test`, `npm test`, `pytest`, `cobc` compile check) — independen, tidak butuh docker-compose.
 - Repo `ledger-rail`: satu GitHub Actions workflow yang checkout dengan `submodules: recursive`, `docker compose up -d`, start semua komponen, jalankan `e2e/` tahap 1–3. Ini yang paling mahal (butuh runner dengan Docker + build 4 bahasa), jadi baru masuk akal setelah tahap 1–3 stabil secara manual.
+- Workflow gabungan `.github/workflows/e2e.yml` selesai 2026-08-21 (toolchain via `jdx/mise-action`, GnuCOBOL via apt, pre-fetch dependency sebelum `start-all.sh`), run pertama hijau 2m36s.
+- 2026-09-25: CI merah sejak commit Dockerize (`f363231`) — `database "ledger" does not exist`. Penyebab: skema kini di-mount ke `docker-entrypoint-initdb.d`, dan server Postgres *sementara* selama init sudah lolos `pg_isready` (unix socket) sebelum database dibuat. Perbaikan `d55100c`: `start-all.sh` menunggu `psql -h 127.0.0.1 -d ledger -c 'select 1'` (TCP hanya dibuka server final). Tak bisa direproduksi di Mac lokal (celah ~0,34 dtk lebih pendek dari latensi `docker exec`), jadi bukti akhirnya run CI berikutnya. `e2e/scripts/ci-local.sh` ditambahkan untuk mengulang langkah workflow dari state bersih.
+- CI unit test per repo submodule: belum dibuat. Perintahnya sudah terverifikasi lokal 2026-09-25 (lihat README root).
 
 ---
 
@@ -83,6 +86,7 @@ Legacy Core (COBOL) ──► batch offline, tidak nyambung live ke jalur di ata
 ledger-rail/
   e2e/
     PLAN.md                   ← dokumen ini
+    README.md                  ← cara menjalankan (3 mode, subset test, env var, troubleshooting)
     package.json               ← Vitest sebagai runner (proyek Node/TS sendiri)
     scripts/
       start-all.sh             ← tahap 1-2, selesai (infra + 4 komponen aplikasi)

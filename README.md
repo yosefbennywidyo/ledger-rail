@@ -35,11 +35,41 @@ git submodule update --init --recursive
 ## Menjalankan environment lokal
 
 ```bash
-mise install          # Go, Java, Node, Python, Maven, uv, rpk
-docker compose up -d  # Postgres, Redis, Redpanda, Vault
+mise install                                  # Go, Java, Node, Python, Maven, uv, rpk
+docker compose up -d postgres redis redpanda  # infra saja; skema Postgres otomatis diterapkan di volume baru
 ```
 
-Jalankan tiap komponen sesuai `BEST_PRACTICES.md` masing-masing (mis. `cd ledger-service && mise exec go -- go run ./cmd/ledger-service`).
+> `docker compose up -d` **tanpa nama service** juga membangun dan menjalankan
+> keempat komponen aplikasi sebagai container di port 8080–8090 — jangan dipakai
+> kalau mau menjalankan komponen sebagai proses lokal (port bentrok).
+
+> **Mac dengan Postgres/Redis Homebrew:** service host yang bind `127.0.0.1:5432`
+> / `:6379` menang atas port-forward Docker. Cek `lsof -nP -iTCP:5432 -sTCP:LISTEN`;
+> kalau pemiliknya bukan Docker, `brew services stop postgresql@14` (dan/atau `redis`) dulu.
+
+### Menjalankan komponen
+
+| Komponen | Port | Jalankan (dari folder komponen) | Unit test |
+|---|---|---|---|
+| `ledger-service` | 8080 | `mise exec go -- go run ./cmd/ledger-service` | `mise exec go -- go test ./...` |
+| `payment-gateway` | 8081 | `mise exec java maven -- mvn spring-boot:run` | `mise exec java maven -- mvn test` |
+| `bff` | 8082 | `npm install && npm run dev` | `npm test` |
+| `fraud-check` | 8090 (`/healthz`) | `uv sync && uv run fraud-check` | `uv sync --extra dev && uv run pytest` |
+| `legacy-core` | — (batch) | lihat [`legacy-core/README.md`](legacy-core/README.md) | — |
+
+Unit test tidak butuh infra apa pun. Detail konfigurasi (env var) ada di README
+masing-masing komponen.
+
+### Menjalankan semua sekaligus + e2e test
+
+```bash
+./e2e/scripts/start-all.sh && (cd e2e && npm test); ./e2e/scripts/stop-all.sh
+```
+
+Varian container penuh (`start-all-docker.sh`), replika CI dari state bersih
+(`ci-local.sh`), menjalankan satu file test, dan troubleshooting: lihat
+[`e2e/README.md`](e2e/README.md). CI GitHub Actions (`.github/workflows/e2e.yml`)
+menjalankan suite yang sama di tiap push/PR ke `main`.
 
 ---
 
