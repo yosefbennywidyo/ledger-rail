@@ -14,6 +14,8 @@ Setiap komponen adalah repo GitHub sendiri, disatukan di sini lewat **git submod
 
 Detail arsitektur, pola komunikasi antar komponen, dan blueprint lengkap ada di `bahasa-teknologi-perbankan.md` dan `project-requirements.md` di folder induk proyek.
 
+Status terkini & langkah berikutnya: [`HANDOFF.md`](HANDOFF.md). Rencana fitur berikutnya: [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
 ---
 
 ## Clone
