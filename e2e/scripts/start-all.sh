@@ -49,7 +49,10 @@ start_component() {
   ("$@" > "$RUN_DIR/$name.log" 2>&1 &)
 }
 
-start_component ledger-service bash -c "cd '$ROOT/ledger-service' && mise exec go -- go run ./cmd/ledger-service"
+echo "== building ledger-service =="
+(cd "$ROOT/ledger-service" && mise exec go -- go build -o "$RUN_DIR/ledger-service-bin" ./cmd/ledger-service)
+
+start_component ledger-service "$RUN_DIR/ledger-service-bin"
 start_component payment-gateway bash -c "cd '$ROOT/payment-gateway' && mise exec java maven -- mvn -q spring-boot:run"
 start_component bff bash -c "cd '$ROOT/bff' && mise exec node -- npm run dev"
 start_component fraud-check bash -c "cd '$ROOT/fraud-check' && mise exec uv -- uv run fraud-check"
