@@ -9,7 +9,7 @@ import { Kafka } from "kafkajs";
 import { KAFKA_BROKERS, KAFKA_TOPIC, POSTGRES_URL } from "./support/env.js";
 import { seedPayerBalance, submitPayment } from "./support/ledger-client.js";
 import { startService, stopService } from "./support/docker.js";
-import { waitForKafkaEvent } from "./support/kafka.js";
+import { waitForBrokerReady, waitForKafkaEvent } from "./support/kafka.js";
 
 const pg = new PgClient({ connectionString: POSTGRES_URL });
 const kafka = new Kafka({ clientId: "e2e-outbox-resilience", brokers: KAFKA_BROKERS, logLevel: 1 });
@@ -42,7 +42,13 @@ describe("transactional outbox survives Redpanda being down at commit time", () 
       await startService("redpanda");
     }
 
+    // Docker's healthcheck (cluster liveness) passing doesn't mean the Kafka
+    // protocol listener has finished electing a leader for this topic yet —
+    // confirm that specifically before waiting for the event, or the wait
+    // below just times out on a broker that's up but not yet ready.
+    await waitForBrokerReady(kafka, KAFKA_TOPIC, 30_000);
+
     const event = await waitForKafkaEvent(kafka, KAFKA_TOPIC, "e2e-outbox-resilience", key, 30_000);
     expect(event).toMatchObject({ idempotency_key: key });
-  }, 75_000);
+  }, 120_000);
 });

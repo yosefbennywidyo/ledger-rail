@@ -1,6 +1,37 @@
 import type { Kafka } from "kafkajs";
 
 /**
+ * Waits until `topic` has a leader elected, polling the admin API. Redpanda's
+ * own docker-compose healthcheck (`rpk cluster info`) reports healthy as
+ * soon as the cluster controller answers — well before the Kafka protocol
+ * listener has finished electing partition leaders after a restart, which
+ * leaves real clients (kafkajs, aiokafka, kafka-go) seeing
+ * NodeNotReadyError/connection-refused for tens of seconds afterward. This
+ * checks the thing a producer/consumer actually needs, not a proxy for it.
+ */
+export async function waitForBrokerReady(kafka: Kafka, topic: string, timeoutMs: number): Promise<void> {
+  const admin = kafka.admin();
+  await admin.connect();
+  try {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      try {
+        const [metadata] = (await admin.fetchTopicMetadata({ topics: [topic] })).topics;
+        if (metadata?.partitions.some((p) => p.leader >= 0)) return;
+      } catch {
+        // not ready yet — fall through to retry
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`${topic} had no elected partition leader within ${timeoutMs}ms`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  } finally {
+    await admin.disconnect();
+  }
+}
+
+/**
  * Reads `topic` from the beginning with a fresh consumer group (so a prior
  * test run's committed offsets never hide this run's message) and resolves
  * with the first event whose Kafka key matches `key`. Rejects after
