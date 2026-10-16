@@ -23,7 +23,7 @@ async function finalBalance(accountId: string): Promise<number> {
     "SELECT COALESCE(SUM(amount_cents), 0) AS balance FROM ledger_entries WHERE account_id = $1",
     [accountId],
   );
-  return Number(result.rows[0].balance);
+  return Number(result.rows[0]!.balance);
 }
 
 describe("concurrent debits never overdraw an account", () => {
@@ -45,7 +45,9 @@ describe("concurrent debits never overdraw an account", () => {
     const results = await Promise.all(attempts);
 
     const succeeded = results.filter((r) => r.status === 201).length;
-    expect(succeeded).toBeLessThanOrEqual(3);
+    const rejected = results.filter((r) => r.status === 422).length;
+    expect(succeeded).toBe(3);
+    expect(rejected).toBe(2);
     expect(await finalBalance(payer)).toBe(1_000 - succeeded * 300);
   });
 
