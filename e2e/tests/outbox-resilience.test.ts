@@ -29,14 +29,17 @@ describe("transactional outbox survives Redpanda being down at commit time", () 
     await seedPayerBalance(pg, payer, 1_000);
     const key = randomUUID();
 
+    console.log(`[${new Date().toISOString()}] test: key=${key}`);
     await stopService("redpanda");
     try {
+      console.log(`[${new Date().toISOString()}] test: submitting payment`);
       const result = await submitPayment({
         payer_account: payer,
         payee_account: payee,
         amount_cents: 250,
         idempotency_key: key,
       });
+      console.log(`[${new Date().toISOString()}] test: submitPayment returned status=${result.status}`);
       expect(result.status).toBe(201); // the write succeeds regardless of Redpanda
     } finally {
       await startService("redpanda");
