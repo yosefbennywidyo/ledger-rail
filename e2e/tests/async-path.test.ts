@@ -10,6 +10,7 @@ import { Kafka } from "kafkajs";
 
 import { FRAUD_CHECK_LOG, FRAUD_CHECK_URL, KAFKA_BROKERS, KAFKA_TOPIC, POSTGRES_URL } from "./support/env.js";
 import { seedPayerBalance, submitPayment } from "./support/ledger-client.js";
+import { waitForKafkaEvent } from "./support/kafka.js";
 
 const pg = new PgClient({ connectionString: POSTGRES_URL });
 const kafka = new Kafka({ clientId: "e2e-async-path", brokers: KAFKA_BROKERS, logLevel: 1 /* ERROR */ });
@@ -21,42 +22,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await pg.end();
 });
-
-/**
- * Reads the transactions topic from the beginning with a fresh consumer
- * group (so a prior test run's committed offsets never hide this run's
- * message) and resolves with the first event whose Kafka key matches.
- *
- * Disconnects only in `finally`, outside the eachMessage callback's own call
- * stack — calling consumer.disconnect() *from inside* eachMessage deadlocks
- * kafkajs, since its internal run loop awaits the callback while the
- * callback awaits disconnect.
- */
-async function waitForPublishedEvent(idempotencyKey: string, timeoutMs = 15_000): Promise<unknown> {
-  const consumer = kafka.consumer({ groupId: `e2e-async-path-${idempotencyKey}` });
-  await consumer.connect();
-  await consumer.subscribe({ topic: KAFKA_TOPIC, fromBeginning: true });
-
-  try {
-    return await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error(`no Kafka message with key ${idempotencyKey} within ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      consumer
-        .run({
-          eachMessage: async ({ message }) => {
-            if (message.key?.toString() !== idempotencyKey) return;
-            clearTimeout(timer);
-            resolve(JSON.parse(message.value?.toString() ?? "null"));
-          },
-        })
-        .catch(reject);
-    });
-  } finally {
-    await consumer.disconnect();
-  }
-}
 
 /** Polls fraud-check's log file for the line it writes after scoring a transaction. */
 async function waitForFraudCheckToProcess(idempotencyKey: string, timeoutMs = 15_000): Promise<string> {
@@ -84,7 +49,7 @@ describe("ledger-service publishes, fraud-check consumes", () => {
     const payeeAccount = `acct-payee-${runId}`;
     await seedPayerBalance(pg, payerAccount, 100_000);
 
-    const eventPromise = waitForPublishedEvent(runId);
+    const eventPromise = waitForKafkaEvent(kafka, KAFKA_TOPIC, "e2e-async-path", runId, 15_000);
 
     const result = await submitPayment({
       payer_account: payerAccount,
