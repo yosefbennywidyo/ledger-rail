@@ -42,7 +42,7 @@ describe("transactional outbox survives Redpanda being down at commit time", () 
       await startService("redpanda");
     }
 
-    const event = await waitForKafkaEvent(kafka, KAFKA_TOPIC, "e2e-outbox-resilience", key, 45_000);
+    const event = await waitForKafkaEvent(kafka, KAFKA_TOPIC, "e2e-outbox-resilience", key, 30_000);
     expect(event).toMatchObject({ idempotency_key: key });
-  }, 60_000);
+  }, 75_000);
 });
