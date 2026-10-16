@@ -72,6 +72,10 @@ jobs:
             echo "==== $f ===="
             cat "$f" || true
           done
+          echo "==== docker compose logs redpanda ===="
+          docker compose logs redpanda --timestamps || true
+          echo "==== docker compose ps ===="
+          docker compose ps || true
 
       - name: Stop all components
         if: always()
