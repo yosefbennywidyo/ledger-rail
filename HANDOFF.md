@@ -1,61 +1,76 @@
 # Handoff — Ledger & Rail
 
-Terakhir diperbarui: **2026-09-25 ~15:00 WIB**.
+Terakhir diperbarui: **2026-10-17 ~03:31 WIB**.
 
 Dokumen acuan:
 - Roadmap fitur (sub-proyek SP-0…SP-8, urutan, kriteria selesai): [`docs/ROADMAP.md`](docs/ROADMAP.md)
 - Rencana & riwayat e2e (Tahap 0–4, jalur A–G): [`e2e/PLAN.md`](e2e/PLAN.md)
 - Cara menjalankan stack & test: [`README.md`](README.md), [`e2e/README.md`](e2e/README.md)
+- SP-1 design spec & implementation plan: [`docs/superpowers/specs/2026-10-16-sp1-ledger-correctness-design.md`](docs/superpowers/specs/2026-10-16-sp1-ledger-correctness-design.md), [`docs/superpowers/plans/2026-10-16-sp1-ledger-correctness.md`](docs/superpowers/plans/2026-10-16-sp1-ledger-correctness.md)
 
 ---
 
-## STATUS — fondasi selesai, roadmap fitur disusun, belum ada design sub-proyek (2026-09-25)
+## STATUS — SP-0 dan SP-1 selesai dan di-merge ke `main` di semua repo (2026-10-17)
 
 | Area | Keadaan |
 |---|---|
-| e2e jalur A–G | 9/9 test lulus (lokal via `ci-local.sh` dan CI) |
-| CI GitHub Actions `e2e.yml` | **hijau** — run 36105169709 (2m52s, commit `bc40071`). Sempat merah sejak `f363231` (2026-08-21) |
-| Unit test per komponen | lulus lokal: Go ok, Java 9, bff 6, fraud-check 5. **Belum ada CI per repo** |
-| Dokumentasi run/test | lengkap: README induk, `e2e/README.md`, README di ledger-service/payment-gateway/bff/fraud-check, `legacy-core/README.md` |
-| Git | semua repo bersih & ter-push (`ledger-rail` `bc40071`, submodule masing-masing 1 commit README) |
+| e2e jalur A–G + concurrency + outbox-resilience | 13/13 test lulus (lokal via `ci-local.sh` dan CI) |
+| CI GitHub Actions `e2e.yml` di `main` | **hijau** — run 38961380321, commit `7d0f7e7` |
+| CI unit test per repo submodule | **ada sekarang** (SP-0): `ledger-service`, `payment-gateway`, `bff`, `fraud-check` masing-masing punya `.github/workflows/test.yml`, action di-pin ke SHA, `persist-credentials: false` |
+| Vulnerability Dependabot | **0 terbuka** di kelima repo — 19 alert di `bff` (fastify/fast-uri/vitest) + 1 di `ledger-rail` (`source-map-js`) sudah difix, dikonfirmasi `state: fixed` |
+| Git | semua repo bersih, di `main`, tidak ada branch/worktree dangling (di-cek & di-prune 2026-10-17) |
 
-### Yang dikerjakan sesi 2026-09-25
+### SP-1 — Kebenaran ledger (selesai)
 
-1. **Diagnosis + perbaikan CI merah** (`d55100c`): skema Postgres kini di-mount ke
-   `docker-entrypoint-initdb.d`; server Postgres *sementara* selama init lolos `pg_isready`
-   (unix socket) sebelum database `ledger` dibuat → `database "ledger" does not exist` di runner
-   yang cepat. `start-all.sh` kini menunggu `psql -h 127.0.0.1 -d ledger -c 'select 1'` (TCP hanya
-   dibuka server final). Tak bisa direproduksi di Mac (celah ~0,34 dtk < latensi `docker exec`);
-   terbukti lewat CI hijau.
-2. **`e2e/scripts/ci-local.sh`** (`50f6c74`): replika langkah workflow dari state bersih
-   (`docker compose down -v` → prefetch → start → test → dump log bila gagal → stop). Menolak jalan
-   bila 5432/6379 dipegang service host.
-3. **Dokumentasi** (`4ce9b51`, `bc40071`): lihat tabel di atas. Semua perintah & contoh curl
-   dijalankan nyata terhadap stack sebelum ditulis.
-4. **Roadmap fitur** (`docs/ROADMAP.md`): gabungan audit kode vs blueprint
-   (`../bahasa-teknologi-perbankan.md` §7, `../project-requirements.md`) → 9 sub-proyek berurutan.
-   Tujuan disepakati: kedalaman teknis + cakupan domain + produk bisa didemokan, bobot setara.
+Advisory lock per akun (`pg_advisory_xact_lock`, bukan row lock — belum ada tabel `accounts`),
+transactional outbox + relay polling, klaim idempotency dua-fase dengan lease 30 detik (409 untuk
+duplikat yang genuinely konkuren). Commit utama: lihat PR yang sudah merged di tiap repo (`ledger-service`#1,
+`payment-gateway`#1, `ledger-rail`#1).
+
+**Bug nyata ditemukan & diperbaiki setelah merge** (bukan sekadar flaky test): `kafka-go`'s `Writer`
+yang dibuat sebagai struct literal (bukan via `NewWriter()`) default ke `RequiredAcks: RequireNone`
+(fire-and-forget) — relay bisa melaporkan "berhasil publish" padahal broker belum benar-benar
+mempersist pesannya (broker mati, misalnya saat `docker compose stop`). Dibuktikan langsung dengan
+`rpk topic consume`: pesan yang diklaim published ternyata tidak ada di topic. Fix: `RequiredAcks:
+segmentio.RequireAll` eksplisit di `ledger-service/internal/kafka/producer.go`. Ini melawan langsung
+garansi inti SP-1 ("event tidak boleh hilang") — proses debugging-nya (3x gagal di CI, dua teori
+salah dibantah lewat probe Go/kafkajs terisolasi) ada di riwayat percakapan sesi 2026-10-16/17,
+belum dituliskan sebagai postmortem terpisah.
+
+### SP-0 — Perapian (selesai)
+
+Tiga item asli dari roadmap + perluasan vulnerability fix:
+1. CI `ledger-service` yang dulu healthy baru setelah 51 dtk (vs batas 60 dtk) — `start-all.sh`
+   sekarang build binary dulu (`go build`), bukan `go run` tiap kali.
+2. bff yang dulu dapat `"result": null` untuk 422/409 — `httpapi.go` sekarang balas JSON terstruktur
+   (`writeJSONError` helper) untuk semua error path, bukan plain text.
+3. CI unit test per submodule (tidak ada sebelumnya) — ditambahkan untuk keempat komponen.
+4. (Perluasan, bukan di roadmap asli) Fix 19+1 vulnerability Dependabot — lihat tabel status.
 
 ## LANGKAH BERIKUTNYA
 
-1. **Konfirmasi urutan roadmap** dengan user (usulan: SP-0 → SP-1 → … → SP-8). Belum dikonfirmasi
-   eksplisit — user minta didokumentasikan dulu.
-2. **SP-1 (kebenaran ledger)**: mulai brainstorming design → spec di
-   `docs/superpowers/specs/` → rencana implementasi. Keputusan kunci yang harus dibuat: mekanisme
-   lock saldo (`FOR UPDATE` vs advisory lock vs `SERIALIZABLE`+retry), bentuk tabel outbox & relay,
-   dan perilaku idempotency konkuren.
-3. **SP-0 (perapian)** bisa jalan paralel — kecil, cukup design singkat di chat.
+1. **SP-2 (akun & saldo)** — sub-proyek berikutnya sesuai urutan roadmap. Mulai dari brainstorming
+   design: entitas akun (buka rekening), akun sistem untuk top-up, `GET` saldo & mutasi.
+2. **Pertimbangkan items yang di-defer dari SP-1** (lihat bagian di bawah) sebelum atau sambil jalan
+   SP-2 — tidak ada yang blocking, tapi beberapa (test khusus race reclaim) akan makin bernilai begitu
+   SP-2 menambah lebih banyak jalur konkuren.
 
-## Temuan terbuka (belum diperbaiki)
+## Temuan yang sengaja di-defer dari SP-1 (bukan bug, keputusan sadar — lihat spec §Decisions)
 
-- **Overdraft konkuren** — cek saldo di luar transaksi DB (`ledger-service/internal/ledger/ledger.go:71` vs `:80`). → SP-1
-- **Event Kafka bisa hilang** — publish setelah commit, gagal hanya di-log (`ledger.go:87`). → SP-1
-- **Idempotency konkuren** — dua request key sama bersamaan: satu kena pelanggaran PK → 422, dan
-  payment-gateway meng-cache 422 itu. → SP-1
-- **bff `"result": null` untuk 422** — body penolakan payment-gateway teks polos
-  (`bff/src/services/payment-gateway-client.ts:80`). → SP-0
-- **Risiko CI flaky** — ledger-service healthy setelah 51 dtk di CI vs batas 60 dtk
-  (`e2e/scripts/start-all.sh:60`). → SP-0
+- **Tidak ada test Postgres khusus untuk race reclaim `FOR UPDATE`** (holder lama vs reclaimer lease
+  30 dtk). Coverage saat ini: dua verifikasi independen lewat code-reading (termasuk trace manual ke
+  behavior `database/sql`) + `go test -race`. Dinilai cukup untuk sekarang; pertimbangkan ulang kalau
+  SP-2+ menambah banyak jalur konkuren baru yang menyentuh jalur ini.
+- **Risiko kolisi hash advisory-lock** (`hashtext(account_id)` bisa collide untuk account_id
+  berbeda) — diterima, karena Postgres auto-detect & abort deadlock (bukan hang permanen) kalau itu
+  terjadi.
+- **`relay_test.go` di `ledger-service`** punya race timing minor di fakes test (margin 10x,
+  `-race` tetap lolos). CodeRabbit juga menemukan ini secara independen — tetap tidak ditangani.
+- **Tidak ada test level HTTP-client untuk 409** di `payment-gateway` (`LedgerServiceClient`) — hanya
+  `PaymentService` yang ditest lewat mock.
+- **Hardening `lock_timeout`/`NOWAIT`** untuk edge case: request yang datang setelah lease 30 dtk
+  kedaluwarsa bisa blocking (bukan fail-fast) kalau holder asli masih hidup tapi lambat. Bukan bug
+  (tetap resolve benar, hanya lebih lambat di corner case langka ini), belum di-hardening.
 
 ## Gotcha (hemat waktu sesi berikutnya)
 
@@ -63,10 +78,30 @@ Dokumen acuan:
   port-forward Docker → komponen/test diam-diam ke DB yang salah. `ci-local.sh` sudah menolak jalan;
   untuk `start-all.sh` cek manual `lsof -nP -iTCP:5432 -sTCP:LISTEN`, lalu
   `brew services stop postgresql@14` (start lagi sesudahnya).
+- **RAM Mac ini kecil (~8 GB), Docker Desktop reservasinya besar** — jalankan `vm_stat` /
+  `sysctl -n vm.swapusage` sebelum siklus Docker berat berulang-ulang; kalau free+speculative < ~200 MB,
+  proses app (misal `ledger-service`) bisa **di-OOM-kill diam-diam** oleh OS (`signal: killed` di
+  log-nya, bukan error aplikasi). Jangan simpulkan ada bug dari kegagalan test sebelum cek ini.
+  Dibuktikan sesi 2026-10-16: belasan siklus `docker compose up/down` berturut-turut bikin RAM habis
+  dan `ledger-service` mati diam-diam di tengah test.
+- **`docker compose start <svc>` tidak menunggu healthcheck** — langsung return begitu proses
+  container mulai, bukan begitu `healthcheck`-nya lolos. Kalau sebuah test men-stop lalu men-start
+  ulang suatu service (misal `redpanda`) dan langsung memakainya, race ini nyata. `e2e/tests/support/docker.ts`'s
+  `startService` sudah menangani ini (poll `docker compose ps --format json`'s `Health` field).
 - **Tidak ada akun genesis** — test yang mendebit wajib seed saldo via SQL dengan idempotency key
   berbeda dari transaksi aslinya (`seedPayerBalance`). Hilang setelah SP-2.
 - **Push submodule dulu, baru induk** — kalau terbalik, checkout CI gagal karena gitlink menunjuk
   commit yang belum ada di GitHub.
+- **PR yang di-stack di atas branch lain (bukan `main`) otomatis ter-CLOSE** oleh GitHub kalau branch
+  dasarnya di-merge+dihapus — tidak di-retarget otomatis ke `main`. Harus dibuat ulang (`gh pr create
+  --base main`), bukan di-reopen (`gh pr reopen` gagal kalau base branch-nya sudah tak ada).
+- **Merge beberapa PR submodule berurutan ke `main` bisa bikin konflik gitlink di parent repo**, kalau
+  branch kerja di parent dicabang sebelum salah satu PR submodule itu selesai — `git merge
+  origin/main` ke branch kerja, lalu arahkan gitlink manual ke commit `main` terbaru tiap submodule
+  (verifikasi dulu dengan `git show <main-sha>:<path>` isinya benar) sebelum commit resolusinya.
+  **Selalu bump gitlink untuk SEMUA submodule yang berubah** — sesi 2026-10-16 sempat lupa bump
+  `bff`/`fraud-check` padahal sudah bump `ledger-service`/`payment-gateway`, jadi CI workflow
+  keduanya tak pernah benar-benar tertaut dari repo induk sampai ketahuan manual.
 - **`docker compose up -d` tanpa nama service** juga membangun & menjalankan 4 container aplikasi
   (port 8080–8090) → bentrok dengan `start-all.sh`. Pakai `docker compose up -d postgres redis redpanda`.
 - **Image infra belum ada** → pull pertama bisa putus (`unexpected EOF`) di VM Docker Desktop;
