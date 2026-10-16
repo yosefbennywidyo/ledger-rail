@@ -46,7 +46,6 @@ describe("concurrent debits never overdraw an account", () => {
 
     const succeeded = results.filter((r) => r.status === 201).length;
     expect(succeeded).toBeLessThanOrEqual(3);
-    expect(await finalBalance(payer)).toBeGreaterThanOrEqual(-0); // never negative
     expect(await finalBalance(payer)).toBe(1_000 - succeeded * 300);
   });
 
@@ -90,10 +89,10 @@ describe("concurrent requests with the same idempotency key", () => {
 
     const [first, second] = await Promise.all([submitPayment(body), submitPayment(body)]);
 
-    // Exactly one definitive 201 must appear; the other is either the same
-    // 201 (if it lost the DB-level race after the first committed) or a 409
-    // (if it was still genuinely in flight) — never a bare 500 or a second
-    // debit applied.
+    // At least one 201 must appear; the other is either a replayed 201 or a
+    // 409 (if it was still genuinely in flight) — never a bare 500. A
+    // double-apply, if it happened, is caught by the balance check below, not
+    // by this status check.
     // Order-independent: sorting numerically would put 201 before 409 and
     // misplace the winner when the loser gets a 409.
     const statuses = [first.status, second.status];
