@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client as PgClient } from "pg";
 
 import { POSTGRES_URL } from "./support/env.js";
-import { seedPayerBalance, submitPayment } from "./support/ledger-client.js";
+import { openAccount, submitPayment, topUp } from "./support/ledger-client.js";
 
 const pg = new PgClient({ connectionString: POSTGRES_URL });
 
@@ -28,9 +28,9 @@ async function finalBalance(accountId: string): Promise<number> {
 
 describe("concurrent debits never overdraw an account", () => {
   it("lets exactly as many debits succeed as the balance covers", async () => {
-    const payer = `payer-${randomUUID()}`;
-    const payee = `payee-${randomUUID()}`;
-    await seedPayerBalance(pg, payer, 1_000);
+    const payer = await openAccount("Payer");
+    const payee = await openAccount("Payee");
+    await topUp(payer, 1_000);
 
     // 5 concurrent debits of 300 each against a balance of 1,000: at most 3
     // can succeed (900 cents moved), never all 5 (which would overdraw to -500).
@@ -52,10 +52,10 @@ describe("concurrent debits never overdraw an account", () => {
   });
 
   it("locks accounts in a consistent order regardless of transfer direction", async () => {
-    const accountA = `acct-a-${randomUUID()}`;
-    const accountB = `acct-b-${randomUUID()}`;
-    await seedPayerBalance(pg, accountA, 1_000);
-    await seedPayerBalance(pg, accountB, 1_000);
+    const accountA = await openAccount("A");
+    const accountB = await openAccount("B");
+    await topUp(accountA, 1_000);
+    await topUp(accountB, 1_000);
 
     // Opposite-direction transfers between the same two accounts, fired at
     // once — must not deadlock or time out.
@@ -83,9 +83,9 @@ describe("concurrent debits never overdraw an account", () => {
 
 describe("concurrent requests with the same idempotency key", () => {
   it("settles to one consistent outcome, replayed identically afterwards", async () => {
-    const payer = `payer-${randomUUID()}`;
-    const payee = `payee-${randomUUID()}`;
-    await seedPayerBalance(pg, payer, 1_000);
+    const payer = await openAccount("Payer");
+    const payee = await openAccount("Payee");
+    await topUp(payer, 1_000);
     const key = randomUUID();
     const body = { payer_account: payer, payee_account: payee, amount_cents: 100, idempotency_key: key };
 

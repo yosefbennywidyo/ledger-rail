@@ -9,7 +9,7 @@ import { Client as PgClient } from "pg";
 import { Kafka } from "kafkajs";
 
 import { FRAUD_CHECK_LOG, FRAUD_CHECK_URL, KAFKA_BROKERS, KAFKA_TOPIC, POSTGRES_URL } from "./support/env.js";
-import { seedPayerBalance, submitPayment } from "./support/ledger-client.js";
+import { openAccount, submitPayment, topUp } from "./support/ledger-client.js";
 import { waitForKafkaEvent } from "./support/kafka.js";
 
 const pg = new PgClient({ connectionString: POSTGRES_URL });
@@ -45,9 +45,9 @@ describe("health check", () => {
 describe("ledger-service publishes, fraud-check consumes", () => {
   it("publishes the exact transaction to Kafka and fraud-check scores it", async () => {
     const runId = randomUUID();
-    const payerAccount = `acct-payer-${runId}`;
-    const payeeAccount = `acct-payee-${runId}`;
-    await seedPayerBalance(pg, payerAccount, 100_000);
+    const payerAccount = await openAccount("Payer");
+    const payeeAccount = await openAccount("Payee");
+    await topUp(payerAccount, 100_000);
 
     const eventPromise = waitForKafkaEvent(kafka, KAFKA_TOPIC, "e2e-async-path", runId, 15_000);
 
