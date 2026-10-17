@@ -1,56 +1,45 @@
 # Handoff — Ledger & Rail
 
-Terakhir diperbarui: **2026-10-17 ~08:14 WIB**.
+Terakhir diperbarui: **2026-10-18 ~01:05 WIB**.
 
 ---
 
-## SP-2 (akun & saldo) — SEDANG JALAN, dihentikan atas permintaan user di Task 8/10
+## SP-2 (akun & saldo) — SELESAI (10/10 task + final review + fix pass), belum di-merge ke `main`
 
 Design doc: [`docs/superpowers/specs/2026-10-17-sp2-accounts-balance-design.md`](docs/superpowers/specs/2026-10-17-sp2-accounts-balance-design.md).
 Plan: [`docs/superpowers/plans/2026-10-17-sp2-accounts-balance.md`](docs/superpowers/plans/2026-10-17-sp2-accounts-balance.md).
 
 **Worktree:** `/Users/crowdotech/apps/me/explore/ledger-rail/.claude/worktrees/sp2-accounts-balance`
-(dibuat lewat `EnterWorktree`, branch `worktree-sp2-accounts-balance` di repo induk **dan** di
-submodule `ledger-service`, `bff`, `payment-gateway`; `fraud-check` tidak disentuh plan ini).
-Ledger eksekusi (progress per-task, termasuk ruling yang dibuat):
-`.superpowers/sdd/2026-10-17-sp2-accounts-balance/progress.md` di dalam worktree itu.
+(branch `worktree-sp2-accounts-balance` di repo induk **dan** di submodule `ledger-service`, `bff`,
+`payment-gateway`; `fraud-check` tidak disentuh plan ini). Ledger eksekusi lengkap (semua 10 task +
+ruling + final review + fix pass): `.superpowers/sdd/2026-10-17-sp2-accounts-balance/progress.md`.
 
-**Status per task (dari 10 total):**
-
-| Task | Isi | Status |
-|---|---|---|
-| 1 | Schema migration: `customers`, `accounts`, `idempotency_claims`, FK `ledger_entries`, seed `system:cash` | selesai |
-| 2 | `internal/account` domain package (ledger-service) + unit test | selesai |
-| 3 | `account_store.go` — implementasi Postgres untuk `account.Repository` | selesai |
-| 4 | `ApplyLocked`: skip overdraft untuk akun `system`, tolak akun `closed` | selesai |
-| 5 | Endpoint HTTP `ledger-service` (`/customers`, `/accounts`, dll) + wiring `main.go` | selesai |
-| 6 | `bff`: `LedgerServiceClient` + test | selesai |
-| 7 | `bff`: route `/api/customers`, `/api/accounts/*` + wiring `app.ts`/`config.ts`/`docker-compose.yml` | selesai |
-| 8 | `bff`: alias `payer_account: "topup"` → `"system:cash"` | selesai |
-| 9 | e2e helpers (`openAccount`, `topUp`, dll) ganti `seedPayerBalance` | **belum mulai** |
-| 10 | Migrasi 5 file e2e test + `accounts.test.ts` baru + jalankan `ci-local.sh` penuh | **belum mulai** |
+Semua 10 task plan selesai, `ci-local.sh` (volume bersih) hijau 21/21. Final whole-branch review
+(fresh context, Opus) menemukan 5 Important finding — semua sudah diperbaiki dalam fix pass
+terpisah (lihat ledger untuk detail RED→GREEN tiap fix) + beberapa Minor yang sengaja di-defer
+(didaftar di ledger, belum ditindaklanjuti). Temuan Important yang diperbaiki: (1) siapa pun bisa
+menutup `system:cash` secara permanen — sekarang ditolak 422; (2) klaim idempotency akun lebih
+lemah dari SP-1 (crash di antara write dan complete-claim bisa duplikat insert saat reclaim 30
+dtk) — sekarang atomic dalam satu transaksi, pola sama seperti `ApplyLocked`; (3) `customer_id`
+bukan UUID balas 500 + mengunci key 30 dtk — sekarang validasi 400 sebelum ke Postgres; (4) test
+e2e concurrent-create race terhadap kontrak 409 sendiri — sudah diperbaiki + ditambah kasus retry
+sequential; (5) menutup akun bersaldo nonzero membuat dana terjebak permanen — sekarang ditolak
+422.
 
 **Langkah lanjutan sesi berikutnya:**
-1. Masuk ke worktree di atas (atau `EnterWorktree` dengan `path` yang sama) — jangan mulai dari
-   `main`, pekerjaan sudah ada di branch `worktree-sp2-accounts-balance` (repo induk + 3 submodule).
-2. Lanjutkan eksekusi plan dengan skill `superpowers:executing-plans`, mulai dari Task 9
-   (`task-start docs/superpowers/plans/2026-10-17-sp2-accounts-balance.md 9` via script
-   `executing-plans/scripts/task-start`) — ledger di `.superpowers/sdd/.../progress.md` sudah
-   mencatat Task 1–8 selesai, jangan dikerjakan ulang.
-3. Setelah Task 9–10 selesai: jalankan final whole-branch review (fresh reviewer, model paling
-   mampu) sesuai skill, lalu `superpowers:finishing-a-development-branch` untuk commit submodule →
-   bump gitlink induk → PR/merge ke `main` di tiap repo (submodule dulu, baru induk — lihat gotcha
-   di bawah).
-4. Container Docker (`postgres`, `redis`, `redpanda`) di worktree ini mungkin masih hidup
-   (`docker compose up -d postgres redis redpanda` dijalankan untuk smoke test Task 5) — cek
-   `docker compose ps` dan `docker compose down` kalau sudah tidak dipakai, supaya tidak membebani
-   RAM (lihat gotcha RAM di bawah).
+1. Masuk ke worktree di atas (atau `EnterWorktree` dengan `path` yang sama).
+2. Jalankan `superpowers:finishing-a-development-branch` untuk commit submodule → bump gitlink
+   induk → PR/merge ke `main` di tiap repo (submodule dulu, baru induk — lihat gotcha di bawah).
+3. Container Docker (`postgres`, `redis`, `redpanda`) di worktree ini mungkin masih hidup dari
+   sesi terakhir — cek `docker compose ps` dan `docker compose down -v` kalau sudah tidak dipakai.
 
-**Catatan desain yang relevan untuk lanjutan (ringkas, detail lengkap di plan/spec):** top-up pakai
+**Catatan desain yang relevan (ringkas, detail lengkap di plan/spec/ledger):** top-up pakai
 `POST /api/payments` existing dengan alias `payer_account: "topup"` (bukan endpoint baru); akun
-sistem `system:cash` di-seed migrasi, bukan API; idempotency untuk create/close customer/akun pakai
-tabel generik baru `idempotency_claims`, sengaja terpisah dari klaim `ledger_transactions` SP-1
-supaya tidak menyentuh jalur konkurensi yang sudah teruji.
+sistem `system:cash` di-seed migrasi, bukan API, dan tidak bisa ditutup; idempotency untuk
+create/close customer/akun pakai tabel generik baru `idempotency_claims` dengan claim+write+complete
+atomic dalam satu transaksi (pola `beginClaimedWork` di `account_store.go`, meniru `ApplyLocked`),
+sengaja terpisah dari klaim `ledger_transactions` SP-1 supaya tidak menyentuh jalur konkurensi yang
+sudah teruji.
 
 ---
 
