@@ -56,7 +56,9 @@ describe("transfers against a closed account", () => {
   it("rejects a transfer whose payer account is closed, with a 422", async () => {
     const payer = await openAccount("Payer");
     const payee = await openAccount("Payee");
-    await topUp(payer, 10_000);
+    // Not funded: closing requires a zero balance (see "closing an account
+    // with a non-zero balance" below), and the closed check rejects
+    // regardless of balance anyway.
     const closeResult = await closeAccount(payer);
     expect(closeResult.status).toBe(200);
 
@@ -79,6 +81,28 @@ describe("system account overdraft", () => {
       const result = await topUp(payee, 10_000);
       expect(result.status).toBe(201);
     }
+  });
+});
+
+describe("closing system:cash", () => {
+  it("is rejected with a 422, and top-ups keep working afterwards", async () => {
+    const result = await closeAccount("system:cash");
+    expect(result.status).toBe(422);
+
+    const payee = await openAccount("Payee");
+    const topUpResult = await topUp(payee, 1_000);
+    expect(topUpResult.status).toBe(201);
+  });
+});
+
+describe("closing an account with a non-zero balance", () => {
+  it("is rejected with a 422", async () => {
+    const payer = await openAccount("Payer");
+    await topUp(payer, 5_000);
+
+    const result = await closeAccount(payer);
+
+    expect(result.status).toBe(422);
   });
 });
 
@@ -111,11 +135,23 @@ describe("concurrent account creation with the same idempotency key", () => {
 
     const [first, second] = await Promise.all([createOnce(), createOnce()]);
 
-    expect(first.status).toBe(201);
-    expect(second.status).toBe(201);
-    expect(second.body).toEqual(first.body);
+    // Whichever request's ClaimKey call runs second while the first is still
+    // mid-flight gets 409, not a replayed 201 — the same order-independent
+    // shape concurrency.test.ts's idempotency-key test asserts. A bare 500 is
+    // never acceptable either way.
+    const statuses = [first.status, second.status];
+    expect(statuses).toContain(201);
+    expect(statuses.every((s) => s === 201 || s === 409)).toBe(true);
 
     const rows = await pg.query("SELECT id FROM accounts WHERE customer_id = $1", [customerId]);
     expect(rows.rowCount).toBe(1);
+
+    // The case the Review Focus actually names: retry with the same key
+    // *after* the account already exists must replay the original 201, not
+    // attempt a duplicate insert or error.
+    const third = await createOnce();
+    expect(third.status).toBe(201);
+    const rowsAfterRetry = await pg.query("SELECT id FROM accounts WHERE customer_id = $1", [customerId]);
+    expect(rowsAfterRetry.rowCount).toBe(1);
   });
 });
