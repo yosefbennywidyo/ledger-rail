@@ -7,7 +7,7 @@ import { Client as PgClient } from "pg";
 import { Kafka } from "kafkajs";
 
 import { KAFKA_BROKERS, KAFKA_TOPIC, POSTGRES_URL } from "./support/env.js";
-import { seedPayerBalance, submitPayment } from "./support/ledger-client.js";
+import { openAccount, submitPayment, topUp } from "./support/ledger-client.js";
 import { startService, stopService } from "./support/docker.js";
 import { waitForBrokerReady, waitForKafkaEvent } from "./support/kafka.js";
 
@@ -24,9 +24,9 @@ afterAll(async () => {
 
 describe("transactional outbox survives Redpanda being down at commit time", () => {
   it("still accepts and later delivers the event once Redpanda is back", async () => {
-    const payer = `payer-${randomUUID()}`;
-    const payee = `payee-${randomUUID()}`;
-    await seedPayerBalance(pg, payer, 1_000);
+    const payer = await openAccount("Payer");
+    const payee = await openAccount("Payee");
+    await topUp(payer, 1_000);
     const key = randomUUID();
 
     console.log(`[${new Date().toISOString()}] test: key=${key}`);

@@ -18,7 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client as PgClient } from "pg";
 
 import { LEGACY_CORE_DIR, POSTGRES_URL } from "./support/env.js";
-import { seedPayerBalance, submitPayment } from "./support/ledger-client.js";
+import { submitPayment, topUp } from "./support/ledger-client.js";
 
 const pg = new PgClient({ connectionString: POSTGRES_URL });
 
@@ -61,8 +61,15 @@ describe("Legacy Core reconciliation", () => {
     const accountB = shortAccountId();
     const accountC = shortAccountId(); // never given an opening balance — must default to zero
 
-    await seedPayerBalance(pg, accountA, 100_000);
-    await seedPayerBalance(pg, accountB, 50_000);
+    // legacy-core's fixed-width PIC X(10) account field can't hold the UUIDs
+    // the real account-creation API generates, so these rows are inserted
+    // directly to satisfy the FK on ledger_entries.account_id — the one place
+    // this suite still talks to Postgres directly, same as before SP-2.
+    for (const accountId of [accountA, accountB, accountC]) {
+      await pg.query("INSERT INTO accounts (id, kind) VALUES ($1, 'customer')", [accountId]);
+    }
+    await topUp(accountA, 100_000);
+    await topUp(accountB, 50_000);
 
     // Sequential on purpose: tx3 debits C, which only has a balance because
     // tx1 and tx2 already credited it.
